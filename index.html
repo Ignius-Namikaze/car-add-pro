@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Ad Generator Pro</title>
+    <!-- Load Firebase Modules -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, deleteDoc, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Expose Firebase objects globally for the main script
+        window.firebase = {
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+            getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, deleteDoc, serverTimestamp, setLogLevel
+        };
+    </script>
+
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Configure Tailwind and Font -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        // Minimalist/Professional Palette
+                        'brand-primary': '#1E3A8A', // Deep Blue
+                        'brand-secondary': '#FBBF24', // Amber Accent
+                        'brand-dark': '#0F172A', // Slate 900
+                        'brand-light': '#F8FAFC', // Slate 50
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Minimalist and Professional Styles */
+        .transition-all {
+            transition-property: all;
+            transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+            transition-duration: 200ms;
+        }
+        .tab-button {
+            @apply px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 border-transparent transition-all;
+        }
+        .tab-button.active {
+            @apply border-brand-primary text-brand-primary bg-white;
+        }
+        .tab-button:not(.active) {
+            @apply text-gray-500 hover:text-brand-dark;
+        }
+        /* Custom spinner for LLM generation */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #FBBF24;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-brand-light font-sans min-h-screen flex items-start justify-center p-4 sm:p-8">
+
+    <div class="w-full max-w-5xl bg-white shadow-2xl rounded-xl p-6 sm:p-10 space-y-6">
+        
+        <!-- Header -->
+        <header class="text-center space-y-2 pb-4 border-b border-gray-200">
+            <h1 class="text-3xl sm:text-4xl font-extrabold text-brand-dark tracking-tight">
+                Ad Generator <span class="text-brand-primary text-2xl sm:text-3xl">Pro</span>
+            </h1>
+            <p id="authStatus" class="text-sm text-gray-400">
+                Initializing...
+            </p>
+        </header>
+
+        <!-- Configuration Panel -->
+        <div class="grid md:grid-cols-3 gap-6 pt-4">
+            
+            <!-- Type, Style, Audience Selects -->
+            <div class="space-y-2">
+                <label for="carType" class="block text-sm font-medium text-gray-700">Type</label>
+                <select id="carType" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm transition-all bg-white">
+                    <option value="SUV">SUV/Crossover</option>
+                    <option value="Sedan">Sedan/Coupe</option>
+                    <option value="Truck">Truck/Utility</option>
+                    <option value="Electric">Electric/Hybrid</option>
+                </select>
+            </div>
+            <div class="space-y-2">
+                <label for="carStyle" class="block text-sm font-medium text-gray-700">Focus</label>
+                <select id="carStyle" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm transition-all bg-white">
+                    <option value="Luxury">Luxury / Premium</option>
+                    <option value="Sport">Sport / Performance</option>
+                    <option value="Budget">Value / Practical</option>
+                    <option value="OffRoad">Rugged / Off-Road</option>
+                </select>
+            </div>
+            <div class="space-y-2">
+                <label for="audience" class="block text-sm font-medium text-gray-700">Audience</label>
+                <select id="audience" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm transition-all bg-white">
+                    <option value="Family">Families / Safety</option>
+                    <option value="Professional">Young Professionals</option>
+                    <option value="Enthusiast">Drivers / Enthusiasts</option>
+                    <option value="Eco">Eco-Conscious</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Output Display & Action Row -->
+        <div class="pt-4 space-y-4">
+            <!-- Ad Output -->
+            <div id="adOutputContainer" class="relative min-h-[120px] bg-brand-dark p-6 rounded-xl flex flex-col items-center justify-center shadow-inner">
+                <p id="adOutput" class="text-center text-xl sm:text-3xl text-brand-secondary font-light italic whitespace-pre-line leading-relaxed">
+                    Connecting to the database...
+                </p>
+                <!-- Full Copy Output (Hidden by default) -->
+                <div id="fullCopyOutput" class="hidden pt-4 text-left w-full text-sm text-gray-300"></div>
+                <!-- LLM Loading Spinner -->
+                <div id="llmSpinner" class="hidden absolute inset-0 bg-brand-dark bg-opacity-90 rounded-xl flex items-center justify-center space-x-3">
+                    <div class="spinner"></div>
+                    <p class="text-brand-secondary font-semibold">Generating full copy...</p>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <button id="generateBtn" class="px-6 py-3 text-base font-bold rounded-lg text-white bg-brand-primary hover:bg-blue-800 shadow-md shadow-blue-300/50 transition-all transform hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center space-x-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m4 14l7-7-7-7"></path></svg>
+                    <span>Tagline</span>
+                </button>
+                
+                <button id="fullCopyBtn" class="px-6 py-3 text-base font-bold rounded-lg text-white bg-green-600 hover:bg-green-700 shadow-md shadow-green-300/50 transition-all transform hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center space-x-2 disabled:opacity-50" disabled>
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    <span>Full Ad Copy</span>
+                </button>
+
+                <button id="saveBtn" class="px-6 py-3 text-base font-semibold rounded-lg text-brand-dark bg-gray-200 hover:bg-brand-secondary hover:text-brand-dark transition-all flex items-center justify-center space-x-2 disabled:opacity-50" disabled>
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    <span>Save Tagline</span>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Tabbed Content Section -->
+        <div class="pt-8">
+            <!-- Tab Headers -->
+            <div class="flex border-b border-gray-200">
+                <button id="tabCustom" class="tab-button active">
+                    Custom Words
+                </button>
+                <button id="tabSaved" class="tab-button">
+                    Saved Ads (<span id="savedCount">0</span>)
+                </button>
+            </div>
+
+            <!-- Tab Content: Custom Words -->
+            <div id="contentCustom" class="py-6 space-y-6">
+                <h3 class="text-lg font-semibold text-brand-dark">Add a Personalized Word</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    
+                    <!-- 1. Verb (General) -->
+                    <div class="space-y-1">
+                        <label class="text-xs font-medium text-gray-500">Verb (General)</label>
+                        <input type="text" id="customVerb" placeholder="e.g., Transcend" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm">
+                    </div>
+
+                    <!-- 2. Feature (Car Type) -->
+                    <div class="space-y-1">
+                        <label for="customFeatureCategory" class="text-xs font-medium text-gray-500">Feature (Car Type)</label>
+                        <select id="customFeatureCategory" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm text-sm">
+                            <option value="">-- Choose Type --</option>
+                            <option value="SUV">SUV/Crossover</option>
+                            <option value="Sedan">Sedan/Coupe</option>
+                            <option value="Truck">Truck/Utility</option>
+                            <option value="Electric">Electric/Hybrid</option>
+                        </select>
+                        <input type="text" id="customFeature" placeholder="e.g., Photon Drive" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm">
+                    </div>
+
+                    <!-- 3. Adjective (Style/Focus) -->
+                    <div class="space-y-1">
+                        <label for="customStyleCategory" class="text-xs font-medium text-gray-500">Adjective (Style/Focus)</label>
+                        <select id="customStyleCategory" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm text-sm">
+                            <option value="">-- Choose Style --</option>
+                            <option value="Luxury">Luxury / Premium</option>
+                            <option value="Sport">Sport / Performance</option>
+                            <option value="Budget">Value / Practical</option>
+                            <option value="OffRoad">Rugged / Off-Road</option>
+                        </select>
+                        <input type="text" id="customAdjective" placeholder="e.g., Zero-Latency" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm">
+                    </div>
+                    
+                    <!-- 4. Slogan (Audience) -->
+                    <div class="space-y-1">
+                        <label for="customSloganCategory" class="text-xs font-medium text-gray-500">Slogan (Audience)</label>
+                        <select id="customSloganCategory" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm text-sm">
+                            <option value="">-- Choose Audience --</option>
+                            <option value="Family">Families / Safety</option>
+                            <option value="Professional">Young Professionals</option>
+                            <option value="Enthusiast">Drivers / Enthusiasts</option>
+                            <option value="Eco">Eco-Conscious</option>
+                        </select>
+                        <input type="text" id="customSlogan" placeholder="e.g., The future is now." class="w-full p-3 border border-gray-300 rounded-lg focus:ring-brand-primary focus:border-brand-primary shadow-sm">
+                    </div>
+                </div>
+                <div class="text-right">
+                    <button id="saveCustomBtn" class="px-6 py-2 text-sm font-semibold rounded-lg text-white bg-green-600 hover:bg-green-700 transition-all disabled:opacity-50" disabled>
+                        Save Custom Words
+                    </button>
+                </div>
+
+                <div id="currentCustomWords" class="pt-4 text-sm text-gray-600 border-t border-gray-100">
+                    <p class="font-medium text-brand-dark mb-2">Active Custom Word List (Click to Delete):</p>
+                    <div id="customListOutput" class="space-y-3">
+                        <p class="italic">No custom words loaded.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab Content: Saved Ads -->
+            <div id="contentSaved" class="py-6 space-y-4 hidden">
+                <h3 class="text-lg font-semibold text-brand-dark">Your Saved Taglines</h3>
+                <div id="savedAdsList" class="space-y-3">
+                    <p class="text-gray-500 italic" id="noSavedAds">No saved ads yet. Generate and save one!</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal for Message/Error Display (Minimalist Replacement for alert/confirm) -->
+        <div id="messageModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center p-4 z-50">
+            <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full space-y-4">
+                <h4 id="modalTitle" class="text-xl font-bold text-brand-dark"></h4>
+                <p id="modalMessage" class="text-gray-700"></p>
+                <div class="text-right">
+                    <button id="modalCloseBtn" class="px-4 py-2 text-sm font-semibold rounded-lg text-white bg-brand-primary hover:bg-blue-800">
+                        OK
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script type="module">
+        // Ensure firebase object is available after script loading
+        const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, setDoc, onSnapshot, collection, query, orderBy, addDoc, deleteDoc, serverTimestamp, setLogLevel } = window.firebase;
+
+        // --- GLOBAL STATE & FIREBASE SETUP ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const authToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db, auth;
+        let userId = null;
+        let isAuthReady = false;
+
+        // Static data definitions
+        let AD_DATA = {
+            verbs: ["Redefine", "Experience", "Conquer", "Elevate", "Command", "Dominate", "Unleash", "Discover", "Reset", "Define", "Embrace", "Master"],
+            Type: { SUV: ["Panoramic Roof", "All-Wheel Drive", "Massive Cargo Space", "High Ground Clearance", "Modular Seating"], Sedan: ["Sleek Aerodynamics", "Refined Cabin", "Effortless Glide", "Precision Steering", "Intuitive Infotainment"], Truck: ["Payload Capacity", "Torquey Engine", "Trail-Rated Chassis", "Integrated Towing Tech", "Rugged Durability"], Electric: ["Zero Emissions", "Instant Torque", "Silent Drive", "Next-Gen Battery", "Regenerative Braking"] },
+            Style: { Luxury: ["Exquisite", "Opulent", "Handcrafted", "Uncompromising", "Premium"], Sport: ["Razor-Sharp", "Performance Tuned", "Track Ready", "Turbocharged", "Dynamic Handling"], Budget: ["Economical", "Dependable", "Practical", "Smart Value", "Low Maintenance"], OffRoad: ["Unstoppable", "Baja-Tested", "Rugged-Chic", "Go-Anywhere", "All-Terrain"] },
+            Audience: { Family: ["The ultimate safety shield.", "Spacious, comfortable, kid-proofed.", "The reliable choice for every journey.", "Designed around your life."], Professional: ["The executive class statement.", "Where productivity meets the open road.", "Connected to your world, effortlessly.", "Your power commute starts now."], Enthusiast: ["Engineered for pure potential.", "Feel the road, demand performance.", "More than a drive, it's a passion.", "Built for the drivers."], Eco: ["Conscious power, zero compromise.", "The quiet revolution in motion.", "Drive the change, effortlessly.", "Sustainable luxury, attainable today."] }
+        };
+
+        // Custom data structure mirrors AD_DATA, but starts empty
+        let userCustomWords = { verbs: [], Type: {}, Style: {}, Audience: {} };
+        let savedAds = [];
+        let currentAd = ""; // Store the current tagline
+        let currentFullAd = ""; // Store the current full copy
+
+        // --- DOM Elements ---
+        const adOutputElement = document.getElementById('adOutput');
+        const fullCopyOutputElement = document.getElementById('fullCopyOutput');
+        const llmSpinnerElement = document.getElementById('llmSpinner');
+        const generateBtn = document.getElementById('generateBtn');
+        const fullCopyBtn = document.getElementById('fullCopyBtn');
+        const saveBtn = document.getElementById('saveBtn');
+        const saveCustomBtn = document.getElementById('saveCustomBtn');
+        const authStatusElement = document.getElementById('authStatus');
+        const savedCountElement = document.getElementById('savedCount');
+        const savedAdsListElement = document.getElementById('savedAdsList');
+        const noSavedAdsElement = document.getElementById('noSavedAds');
+        const customListOutputElement = document.getElementById('customListOutput');
+        
+        // Custom Word Inputs
+        const customVerbInput = document.getElementById('customVerb');
+        const customFeatureInput = document.getElementById('customFeature');
+        const customFeatureCategorySelect = document.getElementById('customFeatureCategory');
+        const customAdjectiveInput = document.getElementById('customAdjective');
+        const customStyleCategorySelect = document.getElementById('customStyleCategory');
+        const customSloganInput = document.getElementById('customSlogan');
+        const customSloganCategorySelect = document.getElementById('customSloganCategory');
+
+        const carTypeSelect = document.getElementById('carType');
+        const carStyleSelect = document.getElementById('carStyle');
+        const audienceSelect = document.getElementById('audience');
+
+        // --- UTILITY FUNCTIONS ---
+        
+        const showMessage = (title, message) => {
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalMessage').textContent = message;
+            document.getElementById('messageModal').style.display = 'flex';
+        };
+
+        document.getElementById('modalCloseBtn').addEventListener('click', () => {
+            document.getElementById('modalMessage').textContent = "";
+            document.getElementById('messageModal').style.display = 'none';
+        });
+        
+        const getRandomElement = (array) => {
+            if (!array || array.length === 0) return "";
+            return array[Math.floor(Math.random() * array.length)];
+        };
+
+        /**
+         * Robust fetch utility with exponential backoff for API calls.
+         */
+        const fetchWithBackoff = async (url, options, maxRetries = 5, delay = 1000) => {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        // Retry on rate limit (429) or server error (5xx)
+                        if (response.status === 429 || response.status >= 500) {
+                            throw new Error(`HTTP error! Status: ${response.status}`, { cause: 'retry' });
+                        }
+                        // For other client errors (4xx), stop and throw the actual error message.
+                        const errorData = await response.json();
+                        throw new Error(`API Error: ${errorData.error?.message || response.statusText}`);
+                    }
+                    return response;
+                } catch (error) {
+                    if (error.cause !== 'retry' || i === maxRetries - 1) {
+                        throw error; 
+                    }
+                    // Exponential delay
+                    const waitTime = delay * Math.pow(2, i);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                }
+            }
+            throw new Error("Failed to fetch after all retries.");
+        };
+
+        // --- FIREBASE INITIALIZATION ---
+
+        const initFirebase = () => {
+            if (!firebaseConfig.apiKey) {
+                authStatusElement.textContent = "Error: Firebase config missing. Cannot save data.";
+                return;
+            }
+            try {
+                // setLogLevel('Debug');
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        // Display the full user ID (mandatory for collaborative environments)
+                        authStatusElement.innerHTML = `Signed in as: <span class="font-mono text-xs">${userId}</span>`; 
+                        isAuthReady = true;
+                        loadData(); 
+                        generateAd();
+                    } else if (authToken) {
+                        await signInWithCustomToken(auth, authToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                    saveCustomBtn.disabled = !isAuthReady;
+                    fullCopyBtn.disabled = !isAuthReady; // Enable full copy if auth is ready
+                });
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                authStatusElement.textContent = `Auth Error: ${error.message}`;
+            }
+        };
+
+        // --- FIRESTORE DATA HANDLING ---
+
+        const getPrivateCollectionPath = (collectionName) => `/artifacts/${appId}/users/${userId}/${collectionName}`;
+        const getCustomWordsDocRef = () => doc(db, getPrivateCollectionPath('custom_words'), 'config');
+        const getSavedAdsCollectionRef = () => collection(db, getPrivateCollectionPath('saved_ads'));
+
+        const loadData = () => {
+            if (!isAuthReady) return;
+
+            // 1. Listen for Custom Word Updates
+            onSnapshot(getCustomWordsDocRef(), (docSnapshot) => {
+                if (docSnapshot.exists()) {
+                    userCustomWords = docSnapshot.data();
+                } else {
+                    // Initialize empty nested objects to prevent runtime errors
+                    userCustomWords = { 
+                        verbs: [], 
+                        Type: { SUV: [], Sedan: [], Truck: [], Electric: [] }, 
+                        Style: { Luxury: [], Sport: [], Budget: [], OffRoad: [] }, 
+                        Audience: { Family: [], Professional: [], Enthusiast: [], Eco: [] } 
+                    };
+                }
+                renderCustomWordsList();
+                if (currentAd) generateAd();
+            }, (error) => console.error("Error fetching custom words:", error));
+
+            // 2. Listen for Saved Ads Updates
+            const savedAdsQuery = query(getSavedAdsCollectionRef(), orderBy('createdAt', 'desc'));
+            onSnapshot(savedAdsQuery, (snapshot) => {
+                savedAds = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                renderSavedAdsList();
+            }, (error) => console.error("Error fetching saved ads:", error));
+        };
+
+        const saveAd = async () => {
+            if (!isAuthReady) { showMessage("Authentication Required", "Please wait for the app to initialize before saving."); return; }
+            if (!currentAd) { showMessage("No Ad to Save", "Generate an ad first!"); return; }
+
+            const adData = {
+                text: currentAd,
+                fullCopy: currentFullAd || "Not generated yet.",
+                carType: carTypeSelect.value,
+                carStyle: carStyleSelect.value,
+                audience: audienceSelect.value,
+                createdAt: serverTimestamp()
+            };
+
+            try {
+                await addDoc(getSavedAdsCollectionRef(), adData);
+                showMessage("Success!", "Tagline saved to your collection.");
+            } catch (error) {
+                console.error("Error saving ad:", error);
+                showMessage("Save Error", `Could not save ad: ${error.message}`);
+            }
+        };
+
+        const deleteAd = async (id) => {
+            if (!isAuthReady) { showMessage("Authentication Error", "App not ready."); return; }
+            try {
+                await deleteDoc(doc(getSavedAdsCollectionRef(), id));
+            } catch (error) {
+                console.error("Error deleting ad:", error);
+                showMessage("Delete Error", `Could not delete ad: ${error.message}`);
+            }
+        };
+        
+        const deleteCustomWord = async (type, category, word) => {
+            if (!isAuthReady) return;
+
+            // Create a deep clone to modify
+            const updatedWords = JSON.parse(JSON.stringify(userCustomWords)); 
+
+            if (type === 'verbs') {
+                updatedWords.verbs = updatedWords.verbs.filter(w => w !== word);
+            } else if (updatedWords[type] && updatedWords[type][category]) {
+                updatedWords[type][category] = updatedWords[type][category].filter(w => w !== word);
+            } else {
+                return; // Should not happen
+            }
+
+            try {
+                await setDoc(getCustomWordsDocRef(), updatedWords);
+                showMessage("Deleted", `Removed custom word: "${word}"`);
+            } catch (error) {
+                console.error("Error deleting custom word:", error);
+                showMessage("Delete Error", `Could not delete word: ${error.message}`);
+            }
+        };
+
+        const saveCustomWords = async () => {
+            if (!isAuthReady) return;
+
+            const verb = customVerbInput.value.trim();
+            const feature = customFeatureInput.value.trim();
+            const styleAdj = customAdjectiveInput.value.trim();
+            const slogan = customSloganInput.value.trim();
+            
+            const featureCat = customFeatureCategorySelect.value;
+            const styleCat = customStyleCategorySelect.value;
+            const sloganCat = customSloganCategorySelect.value;
+            
+            if (!verb && !feature && !styleAdj && !slogan) {
+                showMessage("Empty Input", "Please enter at least one word to save.");
+                return;
+            }
+
+            // Create a deep clone to modify
+            const updatedWords = JSON.parse(JSON.stringify(userCustomWords)); 
+
+            // 1. Handle Verb
+            if (verb) {
+                if (!updatedWords.verbs.includes(verb)) updatedWords.verbs.push(verb);
+            }
+
+            // 2. Handle Feature (Type)
+            if (feature && featureCat && AD_DATA.Type[featureCat]) {
+                if (!updatedWords.Type[featureCat]) updatedWords.Type[featureCat] = [];
+                if (!updatedWords.Type[featureCat].includes(feature)) updatedWords.Type[featureCat].push(feature);
+            } else if (feature) {
+                showMessage("Error", "Please select a Car Type category for your custom Feature.");
+                return;
+            }
+
+            // 3. Handle Adjective (Style)
+            if (styleAdj && styleCat && AD_DATA.Style[styleCat]) {
+                if (!updatedWords.Style[styleCat]) updatedWords.Style[styleCat] = [];
+                if (!updatedWords.Style[styleCat].includes(styleAdj)) updatedWords.Style[styleCat].push(styleAdj);
+            } else if (styleAdj) {
+                showMessage("Error", "Please select a Style/Focus category for your custom Adjective.");
+                return;
+            }
+
+            // 4. Handle Slogan (Audience)
+            if (slogan && sloganCat && AD_DATA.Audience[sloganCat]) {
+                if (!updatedWords.Audience[sloganCat]) updatedWords.Audience[sloganCat] = [];
+                if (!updatedWords.Audience[sloganCat].includes(slogan)) updatedWords.Audience[sloganCat].push(slogan);
+            } else if (slogan) {
+                showMessage("Error", "Please select an Audience category for your custom Slogan.");
+                return;
+            }
+
+            try {
+                await setDoc(getCustomWordsDocRef(), updatedWords);
+                showMessage("Success!", "Custom words saved and ready for use.");
+                // Clear inputs
+                customVerbInput.value = customFeatureInput.value = customAdjectiveInput.value = customSloganInput.value = '';
+                customFeatureCategorySelect.value = customStyleCategorySelect.value = customSloganCategorySelect.value = '';
+            } catch (error) {
+                console.error("Error saving custom words:", error);
+                showMessage("Save Error", `Could not save custom words: ${error.message}`);
+            }
+        };
+
+
+        // --- RENDERING FUNCTIONS ---
+        
+        const renderSavedAdsList = () => {
+            savedAdsListElement.innerHTML = '';
+            savedCountElement.textContent = savedAds.length;
+
+            if (savedAds.length === 0) {
+                noSavedAdsElement.style.display = 'block';
+                return;
+            }
+            noSavedAdsElement.style.display = 'none';
+
+            savedAds.forEach(ad => {
+                const adDiv = document.createElement('div');
+                adDiv.className = 'p-4 bg-brand-light rounded-lg flex justify-between items-start shadow-sm hover:shadow-md transition-all';
+                
+                const date = ad.createdAt ? new Date(ad.createdAt.seconds * 1000).toLocaleDateString() : 'N/A';
+                
+                // Show tagline as main text, and full copy (if available) as secondary text
+                const fullCopySnippet = ad.fullCopy && ad.fullCopy !== 'Not generated yet.' ? `<p class="text-xs text-gray-400 mt-2 italic line-clamp-2">${ad.fullCopy.substring(0, 150)}...</p>` : '';
+
+                adDiv.innerHTML = `
+                    <div class="flex-1 min-w-0">
+                        <p class="font-bold text-brand-dark whitespace-pre-line text-lg">${ad.text}</p>
+                        ${fullCopySnippet}
+                        <p class="text-xs text-gray-500 mt-1">
+                            <span class="font-medium">${ad.carType} | ${ad.carStyle} | ${ad.audience}</span> 
+                            (Saved: ${date})
+                        </p>
+                    </div>
+                    <button data-id="${ad.id}" class="delete-ad-btn text-red-500 hover:text-red-700 ml-4 p-1 rounded-full hover:bg-white transition-all flex-shrink-0" title="Delete Saved Ad">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                `;
+                savedAdsListElement.appendChild(adDiv);
+            });
+
+            document.querySelectorAll('.delete-ad-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    deleteAd(e.currentTarget.dataset.id);
+                });
+            });
+        };
+
+        const renderCustomWordsList = () => {
+            customListOutputElement.innerHTML = '';
+            let wordCount = 0;
+
+            // Helper to generate list items
+            const createListItem = (type, category, word) => {
+                wordCount++;
+                const item = document.createElement('div');
+                item.className = 'inline-flex items-center bg-brand-primary/10 text-brand-dark px-3 py-1 rounded-full text-xs font-medium mr-2 mb-2 cursor-pointer hover:bg-red-500/20 transition-all';
+                item.innerHTML = `
+                    <span class="truncate max-w-xs">${word}</span>
+                    <span class="text-gray-500 ml-2">(${category})</span>
+                    <button data-type="${type}" data-category="${category}" data-word="${word}" class="delete-custom-word ml-2 text-red-600 hover:text-red-800" title="Delete">
+                        &times;
+                    </button>
+                `;
+                item.querySelector('.delete-custom-word').addEventListener('click', (e) => {
+                    const { type, category, word } = e.currentTarget.dataset;
+                    deleteCustomWord(type, category, word);
+                });
+                return item;
+            };
+
+            // 1. Verbs
+            userCustomWords.verbs.forEach(word => {
+                customListOutputElement.appendChild(createListItem('verbs', 'Verb', word));
+            });
+            
+            // 2. Type (Features)
+            Object.keys(userCustomWords.Type).forEach(category => {
+                userCustomWords.Type[category].forEach(word => {
+                    customListOutputElement.appendChild(createListItem('Type', category, word));
+                });
+            });
+
+            // 3. Style (Adjectives)
+            Object.keys(userCustomWords.Style).forEach(category => {
+                userCustomWords.Style[category].forEach(word => {
+                    customListOutputElement.appendChild(createListItem('Style', category, word));
+                });
+            });
+
+            // 4. Audience (Slogans)
+            Object.keys(userCustomWords.Audience).forEach(category => {
+                userCustomWords.Audience[category].forEach(word => {
+                    customListOutputElement.appendChild(createListItem('Audience', category, word));
+                });
+            });
+
+            if (wordCount === 0) {
+                 customListOutputElement.innerHTML = '<p class="italic">No custom words loaded yet. Add some above!</p>';
+            }
+        };
+
+        // --- MAIN AD GENERATION LOGIC ---
+        
+        const generateAd = () => {
+            if (!isAuthReady) return;
+
+            // Clear full copy display
+            fullCopyOutputElement.innerHTML = '';
+            fullCopyOutputElement.classList.add('hidden');
+            currentFullAd = "";
+
+            const carType = carTypeSelect.value;
+            const carStyle = carStyleSelect.value;
+            const audience = audienceSelect.value;
+            
+            // Combine static and custom words
+            const allVerbs = [...AD_DATA.verbs, ...(userCustomWords.verbs || [])];
+            
+            const allFeatures = [
+                ...AD_DATA.Type[carType], 
+                ...(userCustomWords.Type[carType] || [])
+            ];
+            
+            const allStyles = [
+                ...AD_DATA.Style[carStyle], 
+                ...(userCustomWords.Style[carStyle] || [])
+            ];
+
+            const allSlogans = [
+                ...AD_DATA.Audience[audience],
+                ...(userCustomWords.Audience[audience] || [])
+            ];
+
+            // 1. Get components
+            const verb = getRandomElement(allVerbs) || "Drive";
+            const feature = getRandomElement(allFeatures) || "Unmatched Value";
+            const styleAdjective = getRandomElement(allStyles) || "Pure";
+            const audienceSlogan = getRandomElement(allSlogans) || "It's your time to shine.";
+            
+            // 2. Construct the ad tagline
+            let adLine1 = `${verb} the ${styleAdjective} ${feature}.`;
+            adLine1 = adLine1.charAt(0).toUpperCase() + adLine1.slice(1);
+
+            currentAd = `${adLine1}\n${audienceSlogan}`;
+            
+            // 3. Update the display
+            adOutputElement.textContent = currentAd;
+            adOutputElement.classList.remove('text-gray-300', 'italic', 'font-light');
+            adOutputElement.classList.add('text-brand-secondary', 'font-bold');
+            adOutputElement.style.fontSize = '1.8rem';
+            
+            saveBtn.disabled = false;
+        };
+
+        // --- LLM GENERATION LOGIC (Real API Call) ---
+
+        const generateFullAdCopy = async () => {
+            if (!isAuthReady) { showMessage("Authentication Required", "Please wait for the app to initialize."); return; }
+            if (!currentAd) { showMessage("No Tagline", "Generate a tagline first!"); return; }
+
+            const tagline = currentAd.replace(/\n/g, ' ');
+            const carType = carTypeSelect.value;
+            const carStyle = carStyleSelect.value;
+            const audience = audienceSelect.value;
+
+            const systemPrompt = "Act as a professional automotive copywriter. Write a two-paragraph, compelling ad copy based on the provided tagline and car specs. The first paragraph should set the scene and focus on the style/feature. The second paragraph should directly address the target audience and end with a strong call-to-action.";
+            const userQuery = `Write a full ad copy using the following tagline: "${tagline}". The car is a ${carType} focusing on a ${carStyle} audience, targeting ${audience}.`;
+            const apiKey = ""; // Handled by the environment.
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+            };
+
+            // Show Loading State
+            llmSpinnerElement.classList.remove('hidden');
+            fullCopyBtn.disabled = true;
+
+            try {
+                const response = await fetchWithBackoff(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                if (!text) {
+                    throw new Error("Received an empty response from the AI model.");
+                }
+
+                currentFullAd = text.trim();
+                fullCopyOutputElement.innerHTML = `
+                    <p class="font-bold text-gray-200 mb-2 border-b border-gray-700 pb-1">Full Copy Draft:</p>
+                    <p>${currentFullAd.replace(/\n\s*\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>
+                `;
+                fullCopyOutputElement.classList.remove('hidden');
+
+            } catch (error) {
+                console.error("LLM Generation Error:", error);
+                showMessage("AI Copy Error", `Failed to generate full copy: ${error.message}. Please try again.`);
+                currentFullAd = ""; // Reset on error
+                fullCopyOutputElement.classList.add('hidden');
+            } finally {
+                // Hide Loading State regardless of success or failure
+                llmSpinnerElement.classList.add('hidden');
+                fullCopyBtn.disabled = false;
+            }
+        };
+
+
+        // --- EVENT LISTENERS & TAB LOGIC ---
+
+        generateBtn.addEventListener('click', generateAd);
+        fullCopyBtn.addEventListener('click', generateFullAdCopy);
+        saveBtn.addEventListener('click', saveAd);
+        saveCustomBtn.addEventListener('click', saveCustomWords);
+
+        // Tab Switching Logic
+        const tabCustom = document.getElementById('tabCustom');
+        const tabSaved = document.getElementById('tabSaved');
+        const contentCustom = document.getElementById('contentCustom');
+        const contentSaved = document.getElementById('contentSaved');
+
+        const switchTab = (activeTab, activeContent) => {
+            // Deactivate all
+            tabCustom.classList.remove('active');
+            tabSaved.classList.remove('active');
+            contentCustom.classList.add('hidden');
+            contentSaved.classList.add('hidden');
+
+            // Activate target
+            activeTab.classList.add('active');
+            activeContent.classList.remove('hidden');
+        };
+
+        tabCustom.addEventListener('click', () => switchTab(tabCustom, contentCustom));
+        tabSaved.addEventListener('click', () => switchTab(tabSaved, contentSaved));
+
+
+        // --- INITIALIZATION ---
+        window.addEventListener('load', initFirebase);
+    </script>
+</body>
+</html>
